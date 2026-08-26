@@ -27,6 +27,10 @@ import {
   buildPkceLoopbackMismatchHint,
   type PkceLoopbackMismatchHint,
 } from "@/lib/oauth/utils/pkceLoopbackWarning";
+import {
+  positiveNumberOr,
+  resolveDeviceFlowExpiresInSeconds,
+} from "@/shared/components/oauthModal/deviceFlowTiming";
 
 export { formatDeviceCodeRemaining } from "./OAuthModalPanels";
 
@@ -88,10 +92,6 @@ type OAuthModalProps = {
 
 type DevicePollResult =
   { status: "pending" | "slow_down" | "success" } | { status: "error"; message: string };
-
-function positiveNumberOr(value: unknown, fallback: number): number {
-  return Math.max(1, Number(value) || fallback);
-}
 
 async function pollDeviceCodeOnce(
   provider: string | undefined,
@@ -317,7 +317,7 @@ export default function OAuthModal({
     async (deviceCode, codeVerifier, interval, expiresIn, extraData) => {
       const runId = ++deviceFlowRunRef.current;
       const safeInterval = positiveNumberOr(interval, 5);
-      const safeExpiresIn = positiveNumberOr(expiresIn, safeInterval * 60);
+      const safeExpiresIn = resolveDeviceFlowExpiresInSeconds(provider, expiresIn, safeInterval);
       const deadline = Date.now() + safeExpiresIn * 1000;
       let currentInterval = safeInterval;
 
@@ -434,6 +434,14 @@ export default function OAuthModal({
           // _authMethod must be forwarded too: pollToken falls back to "builder-id" without it,
           // which makes postExchange skip the Q Developer profile lookup. An IdC connection then
           // gets persisted with no profileArn and every usage call returns 403.
+          const resolvedGheUrl =
+            provider === "ghe-copilot"
+              ? typeof data.gheUrl === "string" && data.gheUrl.trim()
+                ? data.gheUrl.trim()
+                : typeof gheUrl === "string"
+                  ? gheUrl.trim()
+                  : ""
+              : "";
           const extraData =
             provider === "kiro" || provider === "amazon-q"
               ? {
@@ -442,8 +450,8 @@ export default function OAuthModal({
                   _region: data._region,
                   _authMethod: data._authMethod,
                 }
-              : provider === "ghe-copilot" && gheUrl.trim()
-                ? { gheUrl: gheUrl.trim() }
+              : provider === "ghe-copilot" && resolvedGheUrl
+                ? { gheUrl: resolvedGheUrl }
                 : null;
           startPolling(
             data.device_code,
