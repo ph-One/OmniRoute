@@ -22,6 +22,7 @@ test.afterEach(() => {
 });
 
 test.after(() => {
+  core.closeDbInstance();
   core.resetDbInstance();
   fs.rmSync(TEST_DATA_DIR, { recursive: true, force: true });
 });

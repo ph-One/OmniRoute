@@ -27,6 +27,10 @@ import {
   buildPkceLoopbackMismatchHint,
   type PkceLoopbackMismatchHint,
 } from "@/lib/oauth/utils/pkceLoopbackWarning";
+import {
+  positiveNumberOr,
+  resolveDeviceFlowExpiresInSeconds,
+} from "@/shared/components/oauthModal/deviceFlowTiming";
 
 export { formatDeviceCodeRemaining } from "./OAuthModalPanels";
 
@@ -88,37 +92,6 @@ type OAuthModalProps = {
 
 type DevicePollResult =
   { status: "pending" | "slow_down" | "success" } | { status: "error"; message: string };
-
-function positiveNumberOr(value: unknown, fallback: number): number {
-  return Math.max(1, Number(value) || fallback);
-}
-
-export function resolveDeviceFlowExpiresInSeconds(
-  provider: string | undefined,
-  expiresIn: unknown,
-  interval: unknown
-): number {
-  const safeInterval = positiveNumberOr(interval, 5);
-  const fallback = safeInterval * 60;
-
-  if (provider !== "ghe-copilot") {
-    return positiveNumberOr(expiresIn, fallback);
-  }
-
-  // Some GHE installations return very small expires_in values that behave like
-  // "minutes" instead of OAuth device-flow seconds, which can terminate the UI
-  // loop after a single 5s interval. Normalize to a practical lower bound while
-  // still respecting upstream TTL when it's already in seconds.
-  const parsed = Number(expiresIn);
-  const gheMinimum = Math.max(fallback, 300);
-  if (!Number.isFinite(parsed) || parsed <= 0) {
-    return gheMinimum;
-  }
-  if (parsed < 60) {
-    return Math.max(parsed * 60, gheMinimum);
-  }
-  return Math.max(parsed, gheMinimum);
-}
 
 async function pollDeviceCodeOnce(
   provider: string | undefined,
@@ -461,6 +434,14 @@ export default function OAuthModal({
           // _authMethod must be forwarded too: pollToken falls back to "builder-id" without it,
           // which makes postExchange skip the Q Developer profile lookup. An IdC connection then
           // gets persisted with no profileArn and every usage call returns 403.
+          const resolvedGheUrl =
+            provider === "ghe-copilot"
+              ? typeof data.gheUrl === "string" && data.gheUrl.trim()
+                ? data.gheUrl.trim()
+                : typeof gheUrl === "string"
+                  ? gheUrl.trim()
+                  : ""
+              : "";
           const extraData =
             provider === "kiro" || provider === "amazon-q"
               ? {
@@ -469,13 +450,8 @@ export default function OAuthModal({
                   _region: data._region,
                   _authMethod: data._authMethod,
                 }
-              : provider === "ghe-copilot"
-                ? {
-                    gheUrl:
-                      typeof data.gheUrl === "string" && data.gheUrl.trim()
-                        ? data.gheUrl.trim()
-                        : gheUrl.trim(),
-                  }
+              : provider === "ghe-copilot" && resolvedGheUrl
+                ? { gheUrl: resolvedGheUrl }
                 : null;
           startPolling(
             data.device_code,
