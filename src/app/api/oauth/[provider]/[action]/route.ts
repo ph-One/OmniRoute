@@ -261,6 +261,7 @@ export async function GET(
 
       return NextResponse.json({
         ...deviceData,
+        ...(provider === "ghe-copilot" && gheUrl ? { gheUrl: gheUrl.trim() } : {}),
         codeVerifier: authData.codeVerifier,
       });
     }

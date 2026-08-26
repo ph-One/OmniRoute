@@ -93,6 +93,33 @@ function positiveNumberOr(value: unknown, fallback: number): number {
   return Math.max(1, Number(value) || fallback);
 }
 
+export function resolveDeviceFlowExpiresInSeconds(
+  provider: string | undefined,
+  expiresIn: unknown,
+  interval: unknown
+): number {
+  const safeInterval = positiveNumberOr(interval, 5);
+  const fallback = safeInterval * 60;
+
+  if (provider !== "ghe-copilot") {
+    return positiveNumberOr(expiresIn, fallback);
+  }
+
+  // Some GHE installations return very small expires_in values that behave like
+  // "minutes" instead of OAuth device-flow seconds, which can terminate the UI
+  // loop after a single 5s interval. Normalize to a practical lower bound while
+  // still respecting upstream TTL when it's already in seconds.
+  const parsed = Number(expiresIn);
+  const gheMinimum = Math.max(fallback, 300);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return gheMinimum;
+  }
+  if (parsed < 60) {
+    return Math.max(parsed * 60, gheMinimum);
+  }
+  return Math.max(parsed, gheMinimum);
+}
+
 async function pollDeviceCodeOnce(
   provider: string | undefined,
   payload: Record<string, unknown>,
@@ -317,7 +344,7 @@ export default function OAuthModal({
     async (deviceCode, codeVerifier, interval, expiresIn, extraData) => {
       const runId = ++deviceFlowRunRef.current;
       const safeInterval = positiveNumberOr(interval, 5);
-      const safeExpiresIn = positiveNumberOr(expiresIn, safeInterval * 60);
+      const safeExpiresIn = resolveDeviceFlowExpiresInSeconds(provider, expiresIn, safeInterval);
       const deadline = Date.now() + safeExpiresIn * 1000;
       let currentInterval = safeInterval;
 
@@ -442,8 +469,13 @@ export default function OAuthModal({
                   _region: data._region,
                   _authMethod: data._authMethod,
                 }
-              : provider === "ghe-copilot" && gheUrl.trim()
-                ? { gheUrl: gheUrl.trim() }
+              : provider === "ghe-copilot"
+                ? {
+                    gheUrl:
+                      typeof data.gheUrl === "string" && data.gheUrl.trim()
+                        ? data.gheUrl.trim()
+                        : gheUrl.trim(),
+                  }
                 : null;
           startPolling(
             data.device_code,
